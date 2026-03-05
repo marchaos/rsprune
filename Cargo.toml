@@ -28,6 +28,7 @@ regex = "1.12.3"
 oxc_ast_visit = "0.116.0"
 dashmap = "6.1.0"
 ignore = "0.4.25"
+globset = "0.4"
 
 [profile.release]
 opt-level = 3

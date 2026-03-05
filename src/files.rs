@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 
@@ -20,10 +21,10 @@ pub fn walk_and_parse(
 ) -> Vec<(PathBuf, FileAnalysis, String)> {
     let (tx, rx) = mpsc::sync_channel::<PathBuf>(256);
 
-    // Build parallel walker across all include directories
-    let builder = build_walker(root, include, exclude);
+    let builder = build_walker(root, include);
+    let include_set = build_glob_set(root, include, true);
+    let exclude_set = build_glob_set(root, exclude, false);
 
-    let exclude = exclude.to_vec();
     let ignore_patterns: Vec<_> = ignore_patterns
         .iter()
         .map(|re| re.as_str().to_owned())
@@ -33,7 +34,8 @@ pub fn walk_and_parse(
     std::thread::spawn(move || {
         builder.build_parallel().run(|| {
             let tx = tx.clone();
-            let exclude = exclude.clone();
+            let include_set = include_set.clone();
+            let exclude_set = exclude_set.clone();
             let ignore_patterns = ignore_patterns.clone();
             Box::new(move |result| {
                 use ignore::WalkState;
@@ -58,10 +60,14 @@ pub fn walk_and_parse(
                     return WalkState::Continue;
                 }
 
-                let path_str = path.to_string_lossy();
-                if exclude.iter().any(|ex| path_str.contains(ex.trim_end_matches('/'))) {
+                if !include_set.is_match(path) {
                     return WalkState::Continue;
                 }
+                if exclude_set.is_match(path) {
+                    return WalkState::Continue;
+                }
+
+                let path_str = path.to_string_lossy();
                 if ignore_patterns.iter().any(|pat| {
                     regex::Regex::new(pat).map(|re| re.is_match(&path_str)).unwrap_or(false)
                 }) {
@@ -86,8 +92,54 @@ pub fn walk_and_parse(
         .collect()
 }
 
-fn build_walker(root: &Path, include: &[String], exclude: &[String]) -> WalkBuilder {
-    // Start with first include dir, add rest
+/// Build a GlobSet from tsconfig include/exclude patterns rooted at `root`.
+///
+/// Normalises patterns to match tsconfig semantics:
+/// - Bare directory name or `dir/` → `dir/**/*`
+/// - `dir/**` → `dir/**/*`
+/// - Patterns already containing `*` are used as-is
+fn build_glob_set(root: &Path, patterns: &[String], is_include: bool) -> GlobSet {
+    let mut builder = GlobSetBuilder::new();
+
+    if patterns.is_empty() {
+        if is_include {
+            // No include patterns = match everything
+            builder.add(Glob::new("**/*").unwrap());
+        }
+        return builder.build().unwrap();
+    }
+
+    for pattern in patterns {
+        let normalised = normalise_tsconfig_glob(pattern);
+        // Make absolute by joining with root
+        let abs = root.join(&normalised);
+        let abs_str = abs.to_string_lossy();
+        if let Ok(glob) = Glob::new(&abs_str) {
+            builder.add(glob);
+        }
+    }
+
+    builder.build().unwrap_or_else(|_| GlobSetBuilder::new().build().unwrap())
+}
+
+/// Normalise a tsconfig include/exclude pattern to a proper glob.
+///
+/// tsconfig semantics:
+/// - `src` or `src/`      → `src/**/*`
+/// - `src/**`             → `src/**/*`
+/// - `**/*.test.ts`       → unchanged
+/// - `src/**/*.ts`        → unchanged
+fn normalise_tsconfig_glob(pattern: &str) -> String {
+    let p = pattern.trim_end_matches('/');
+    if p.contains('*') || p.contains('?') {
+        // Already a glob — use as-is
+        return p.to_string();
+    }
+    // Bare path — treat as directory, recurse into all files
+    format!("{p}/**/*")
+}
+
+fn build_walker(root: &Path, include: &[String]) -> WalkBuilder {
     let bases: Vec<PathBuf> = include
         .iter()
         .map(|p| include_base(root, p))
@@ -100,30 +152,32 @@ fn build_walker(root: &Path, include: &[String], exclude: &[String]) -> WalkBuil
 
     builder
         .follow_links(true)
-        .hidden(false)          // don't skip hidden files
-        .standard_filters(false) // don't read .gitignore etc
+        .hidden(false)
+        .standard_filters(false)
         .git_ignore(false)
         .git_global(false)
         .git_exclude(false)
         .ignore(false)
         .threads(num_cpus());
 
-    // Add exclude overrides
-    if !exclude.is_empty() {
-        // We handle exclude in the visitor callback
-    }
-
     builder
 }
 
-/// Extract a walkable base directory from a tsconfig include pattern.
-///
-/// Supports simple directory patterns (`src/`, `src/**`) which covers the
-/// vast majority of real-world tsconfigs. Fine-grained glob patterns like
-/// `**/*.test.ts` or negation patterns are not supported — the full directory
-/// is walked and file-level filtering is left to --ignore-files.
+/// Extract the deepest walkable base directory from a tsconfig include pattern.
+/// Walking starts here; glob filtering handles the rest.
 fn include_base(root: &Path, pattern: &str) -> PathBuf {
-    let trimmed = pattern.trim_end_matches('/').trim_end_matches("/**");
+    // Strip trailing wildcards to find the literal prefix
+    let trimmed = pattern
+        .trim_end_matches('/')
+        .trim_end_matches("/**/*")
+        .trim_end_matches("/**")
+        .trim_end_matches("/*");
+
+    // If there's still a wildcard, walk from root
+    if trimmed.contains('*') || trimmed.contains('?') {
+        return root.to_path_buf();
+    }
+
     let base = root.join(trimmed);
     if base.is_dir() { base } else { base.parent().unwrap_or(root).to_path_buf() }
 }
@@ -136,16 +190,16 @@ fn num_cpus() -> usize {
 
 /// Collect file paths only (no parsing), used in tests.
 pub fn collect_files(root: &Path, include: &[String], exclude: &[String]) -> Vec<PathBuf> {
-    let mut results: Vec<PathBuf> = Vec::new();
-
     let (tx, rx) = mpsc::sync_channel::<PathBuf>(256);
-    let builder = build_walker(root, include, exclude);
-    let exclude = exclude.to_vec();
+    let builder = build_walker(root, include);
+    let include_set = build_glob_set(root, include, true);
+    let exclude_set = build_glob_set(root, exclude, false);
 
     std::thread::spawn(move || {
         builder.build_parallel().run(|| {
             let tx = tx.clone();
-            let exclude = exclude.clone();
+            let include_set = include_set.clone();
+            let exclude_set = exclude_set.clone();
             Box::new(move |result| {
                 use ignore::WalkState;
                 let Ok(entry) = result else { return WalkState::Continue };
@@ -155,17 +209,15 @@ pub fn collect_files(root: &Path, include: &[String], exclude: &[String]) -> Vec
                 let path = entry.path();
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                 if !EXTENSIONS.contains(&ext) { return WalkState::Continue; }
-                let path_str = path.to_string_lossy();
-                if exclude.iter().any(|ex| path_str.contains(ex.trim_end_matches('/'))) {
-                    return WalkState::Continue;
-                }
+                if !include_set.is_match(path) { return WalkState::Continue; }
+                if exclude_set.is_match(path) { return WalkState::Continue; }
                 let _ = tx.send(path.to_path_buf());
                 WalkState::Continue
             })
         });
     });
 
-    for path in rx { results.push(path); }
+    let mut results: Vec<PathBuf> = rx.into_iter().collect();
     results.sort();
     results
 }
