@@ -1,0 +1,136 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            npm_pkg: rsprune-darwin-arm64
+            bin: rsprune
+
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            npm_pkg: rsprune-darwin-x64
+            bin: rsprune
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            npm_pkg: rsprune-linux-x64
+            bin: rsprune
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            npm_pkg: rsprune-linux-arm64
+            bin: rsprune
+            cross: true
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            npm_pkg: rsprune-win32-x64
+            bin: rsprune.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (ARM Linux)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Build (native)
+        if: "!matrix.cross"
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Copy binary into npm package
+        shell: bash
+        run: |
+          mkdir -p npm/${{ matrix.npm_pkg }}/bin
+          cp target/${{ matrix.target }}/release/${{ matrix.bin }} npm/${{ matrix.npm_pkg }}/bin/
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.npm_pkg }}
+          path: npm/${{ matrix.npm_pkg }}/bin/
+
+  publish:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Extract version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+
+      - name: Update versions in package.json files
+        run: |
+          for pkg in npm/rsprune npm/rsprune-darwin-arm64 npm/rsprune-darwin-x64 npm/rsprune-linux-x64 npm/rsprune-linux-arm64 npm/rsprune-win32-x64; do
+            node -e "
+              const fs = require('fs');
+              const p = fs.readFileSync('$pkg/package.json', 'utf8');
+              const j = JSON.parse(p);
+              j.version = process.env.VERSION;
+              if (j.optionalDependencies) {
+                for (const k of Object.keys(j.optionalDependencies)) {
+                  j.optionalDependencies[k] = process.env.VERSION;
+                }
+              }
+              fs.writeFileSync('$pkg/package.json', JSON.stringify(j, null, 2) + '\n');
+            "
+          done
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Place binaries into npm packages
+        run: |
+          for pkg in rsprune-darwin-arm64 rsprune-darwin-x64 rsprune-linux-x64 rsprune-linux-arm64 rsprune-win32-x64; do
+            mkdir -p npm/$pkg/bin
+            cp artifacts/$pkg/* npm/$pkg/bin/
+            chmod +x npm/$pkg/bin/* || true
+          done
+
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for pkg in rsprune-darwin-arm64 rsprune-darwin-x64 rsprune-linux-x64 rsprune-linux-arm64 rsprune-win32-x64; do
+            cd npm/$pkg
+            npm publish --access public
+            cd ../..
+          done
+
+      - name: Publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd npm/rsprune
+          npm publish --access public

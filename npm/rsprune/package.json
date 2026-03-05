@@ -1,0 +1,26 @@
+{
+  "name": "rsprune",
+  "version": "0.1.0",
+  "description": "Fast unused TypeScript export finder",
+  "bin": {
+    "rsprune": "bin.js"
+  },
+  "files": [
+    "bin.js"
+  ],
+  "optionalDependencies": {
+    "rsprune-darwin-arm64": "0.1.0",
+    "rsprune-darwin-x64": "0.1.0",
+    "rsprune-linux-x64": "0.1.0",
+    "rsprune-linux-arm64": "0.1.0",
+    "rsprune-win32-x64": "0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/marchaos/rsprune.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=14"
+  }
+}

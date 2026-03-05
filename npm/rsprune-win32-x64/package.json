@@ -1,0 +1,13 @@
+{
+  "name": "rsprune-win32-x64",
+  "version": "0.1.0",
+  "description": "rsprune binary for Windows x64",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin/"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/marchaos/rsprune.git"
+  },
+  "license": "MIT"
+}
