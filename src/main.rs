@@ -60,12 +60,16 @@ fn main() -> Result<()> {
     });
     let root = config.root_dir(&tsconfig_path);
 
-    let include = config
-        .include
-        .as_deref()
-        .unwrap_or(&["src".to_string()][..])
-        .to_vec();
-    let exclude = config.exclude.as_deref().unwrap_or_default().to_vec();
+    // When include is absent tsc walks the entire project root.
+    let include = config.include.as_deref().unwrap_or(&[]).to_vec();
+
+    // Start with explicit excludes, then append tsc's automatic outDir exclusion.
+    let mut exclude = config.exclude.as_deref().unwrap_or_default().to_vec();
+    if let Some(opts) = &config.compiler_options {
+        if let Some(out_dir) = &opts.out_dir {
+            exclude.push(out_dir.clone());
+        }
+    }
 
     let ignore_patterns: Vec<regex::Regex> = args
         .ignore_files

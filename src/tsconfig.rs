@@ -10,6 +10,7 @@ use serde::Deserialize;
 pub struct CompilerOptions {
     pub base_url: Option<String>,
     pub paths: Option<HashMap<String, Vec<String>>>,
+    pub out_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

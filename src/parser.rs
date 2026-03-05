@@ -47,13 +47,33 @@ pub fn analyze_file(path: &Path, source: &str) -> FileAnalysis {
         .with_options(parse_opts)
         .parse();
 
+    let line_starts = compute_line_starts(source);
     let mut collector = AstCollector {
-        source,
         analysis: FileAnalysis::default(),
         ambient_module_depth: 0,
+        line_starts,
     };
     collector.visit_program(&ret.program);
     collector.analysis
+}
+
+/// Precompute the byte offset of each line's start (line_starts[0] = 0 for line 1).
+fn compute_line_starts(source: &str) -> Vec<u32> {
+    let mut starts = vec![0u32];
+    for (i, &b) in source.as_bytes().iter().enumerate() {
+        if b == b'\n' {
+            starts.push((i + 1) as u32);
+        }
+    }
+    starts
+}
+
+/// O(log n) line/col lookup using precomputed line starts.
+fn line_col_from_starts(line_starts: &[u32], offset: u32) -> (u32, u32) {
+    // partition_point returns the number of starts ≤ offset, which equals the 1-indexed line number.
+    let line = line_starts.partition_point(|&s| s <= offset) as u32;
+    let line_start = line_starts[(line - 1) as usize];
+    (line, offset - line_start)
 }
 
 fn source_type_for(path: &Path) -> SourceType {
@@ -66,15 +86,16 @@ fn source_type_for(path: &Path) -> SourceType {
     }
 }
 
-struct AstCollector<'s> {
-    source: &'s str,
+struct AstCollector {
     analysis: FileAnalysis,
     /// Depth inside `declare module '...'` blocks (ambient module augmentation).
     /// Exports here extend external modules and should not be tracked as our exports.
     ambient_module_depth: u32,
+    /// Precomputed byte offset of each line's start; used for O(log n) line/col lookup.
+    line_starts: Vec<u32>,
 }
 
-impl<'s, 'a> Visit<'a> for AstCollector<'s> {
+impl<'a> Visit<'a> for AstCollector {
     // --- AMBIENT MODULE AUGMENTATION TRACKING ---
 
     fn visit_ts_module_declaration(&mut self, decl: &TSModuleDeclaration<'a>) {
@@ -120,7 +141,7 @@ impl<'s, 'a> Visit<'a> for AstCollector<'s> {
                     ModuleExportName::IdentifierName(id) => id.name.to_string(),
                     ModuleExportName::StringLiteral(s) => s.value.to_string(),
                 };
-                let (line, col) = offset_to_line_col(self.source, spec.span.start as usize);
+                let (line, col) = line_col_from_starts(&self.line_starts,spec.span.start);
                 self.analysis.exports.push(ExportInfo { name, line, col });
             }
         }
@@ -133,7 +154,7 @@ impl<'s, 'a> Visit<'a> for AstCollector<'s> {
             walk::walk_export_default_declaration(self, decl);
             return;
         }
-        let (line, col) = offset_to_line_col(self.source, decl.span.start as usize);
+        let (line, col) = line_col_from_starts(&self.line_starts,decl.span.start);
         self.analysis.exports.push(ExportInfo {
             name: "default".to_string(),
             line,
@@ -219,7 +240,7 @@ impl<'s, 'a> Visit<'a> for AstCollector<'s> {
     }
 }
 
-impl<'s> AstCollector<'s> {
+impl AstCollector {
     fn collect_declaration_exports(&mut self, decl: &Declaration) {
         match decl {
             Declaration::VariableDeclaration(var) => {
@@ -229,7 +250,7 @@ impl<'s> AstCollector<'s> {
             }
             Declaration::FunctionDeclaration(func) => {
                 if let Some(id) = &func.id {
-                    let (line, col) = offset_to_line_col(self.source, func.span.start as usize);
+                    let (line, col) = line_col_from_starts(&self.line_starts,func.span.start);
                     self.analysis.exports.push(ExportInfo {
                         name: id.name.to_string(),
                         line,
@@ -239,7 +260,7 @@ impl<'s> AstCollector<'s> {
             }
             Declaration::ClassDeclaration(cls) => {
                 if let Some(id) = &cls.id {
-                    let (line, col) = offset_to_line_col(self.source, cls.span.start as usize);
+                    let (line, col) = line_col_from_starts(&self.line_starts,cls.span.start);
                     self.analysis.exports.push(ExportInfo {
                         name: id.name.to_string(),
                         line,
@@ -248,7 +269,7 @@ impl<'s> AstCollector<'s> {
                 }
             }
             Declaration::TSTypeAliasDeclaration(ts) => {
-                let (line, col) = offset_to_line_col(self.source, ts.span.start as usize);
+                let (line, col) = line_col_from_starts(&self.line_starts,ts.span.start);
                 self.analysis.exports.push(ExportInfo {
                     name: ts.id.name.to_string(),
                     line,
@@ -256,7 +277,7 @@ impl<'s> AstCollector<'s> {
                 });
             }
             Declaration::TSInterfaceDeclaration(ts) => {
-                let (line, col) = offset_to_line_col(self.source, ts.span.start as usize);
+                let (line, col) = line_col_from_starts(&self.line_starts,ts.span.start);
                 self.analysis.exports.push(ExportInfo {
                     name: ts.id.name.to_string(),
                     line,
@@ -264,7 +285,7 @@ impl<'s> AstCollector<'s> {
                 });
             }
             Declaration::TSEnumDeclaration(ts) => {
-                let (line, col) = offset_to_line_col(self.source, ts.span.start as usize);
+                let (line, col) = line_col_from_starts(&self.line_starts,ts.span.start);
                 self.analysis.exports.push(ExportInfo {
                     name: ts.id.name.to_string(),
                     line,
@@ -272,7 +293,7 @@ impl<'s> AstCollector<'s> {
                 });
             }
             Declaration::TSModuleDeclaration(ts) => {
-                let (line, col) = offset_to_line_col(self.source, ts.span.start as usize);
+                let (line, col) = line_col_from_starts(&self.line_starts,ts.span.start);
                 let name = match &ts.id {
                     TSModuleDeclarationName::Identifier(id) => id.name.to_string(),
                     TSModuleDeclarationName::StringLiteral(s) => s.value.to_string(),
@@ -286,7 +307,7 @@ impl<'s> AstCollector<'s> {
     fn collect_binding_pattern_exports(&mut self, pat: &BindingPattern) {
         match pat {
             BindingPattern::BindingIdentifier(id) => {
-                let (line, col) = offset_to_line_col(self.source, id.span.start as usize);
+                let (line, col) = line_col_from_starts(&self.line_starts,id.span.start);
                 self.analysis.exports.push(ExportInfo {
                     name: id.name.to_string(),
                     line,
@@ -310,30 +331,22 @@ impl<'s> AstCollector<'s> {
     }
 }
 
+/// Public helper used in tests. For file-level analysis the precomputed path in
+/// `analyze_file` is used instead.
 pub fn offset_to_line_col(source: &str, offset: usize) -> (u32, u32) {
-    let bytes = source.as_bytes();
-    let offset = offset.min(bytes.len());
-    let mut line = 1u32;
-    let mut last_newline = 0usize;
-    for (i, &b) in bytes[..offset].iter().enumerate() {
-        if b == b'\n' {
-            line += 1;
-            last_newline = i + 1;
-        }
-    }
-    let col = (offset - last_newline) as u32;
-    (line, col)
+    let starts = compute_line_starts(source);
+    let offset = (offset.min(source.len())) as u32;
+    line_col_from_starts(&starts, offset)
 }
 
 /// Returns true if the line immediately preceding `line_number` (1-indexed) contains
-/// a `// ts-unused-exports:disable-next-line` comment.
+/// a suppression comment. Uses an iterator to avoid allocating a Vec<&str>.
 pub fn is_suppressed(source: &str, line_number: u32) -> bool {
     if line_number <= 1 {
         return false;
     }
-    let lines: Vec<&str> = source.split('\n').collect();
     let prev_line_idx = (line_number - 2) as usize;
-    if let Some(prev) = lines.get(prev_line_idx) {
+    if let Some(prev) = source.split('\n').nth(prev_line_idx) {
         let trimmed = prev.trim();
         trimmed.contains("ts-unused-exports:disable-next-line")
             || trimmed.contains("rsprune:disable-next-line")

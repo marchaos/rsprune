@@ -279,3 +279,65 @@ fn exclude_paths_from_report_affects_module_count() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("1 modules"), "got: {stdout}");
 }
+
+// ─── outDir AUTO-EXCLUSION ────────────────────────────────────────────────────
+
+#[test]
+fn outdir_is_excluded_automatically() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let dist = dir.path().join("dist");
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&dist).unwrap();
+
+    fs::write(src.join("a.ts"), "export const foo = 1;").unwrap();
+    // Simulated compiled output — should not be analysed
+    fs::write(dist.join("a.ts"), "export const foo = 1;").unwrap();
+
+    // tsconfig with outDir set
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{"include":["src"],"compilerOptions":{"outDir":"dist"}}"#,
+    )
+    .unwrap();
+
+    // foo is unused (no other file imports it), but dist/a.ts should not be
+    // picked up and cause a false "foo is used" result.
+    let out = Command::new(bin())
+        .arg("tsconfig.json")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Only src/a.ts is analysed; dist/ is excluded by outDir
+    assert!(stdout.contains("foo"), "foo in src should be reported");
+    assert_eq!(out.status.code(), Some(1));
+}
+
+// ─── EMPTY INCLUDE (walk from root) ──────────────────────────────────────────
+
+#[test]
+fn no_include_walks_from_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let lib = dir.path().join("lib");
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&lib).unwrap();
+
+    fs::write(src.join("a.ts"), "export const foo = 1;").unwrap();
+    fs::write(lib.join("b.ts"), "import { foo } from '../src/a';").unwrap();
+
+    // tsconfig with no "include" key — should walk from root and find both files
+    fs::write(dir.path().join("tsconfig.json"), r#"{}"#).unwrap();
+
+    let out = Command::new(bin())
+        .arg("tsconfig.json")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // lib/b.ts imports foo, so foo should be considered used → clean run
+    assert!(out.status.success(), "expected exit 0, got: {stdout}");
+}

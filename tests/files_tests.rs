@@ -99,6 +99,22 @@ fn include_glob_pattern() {
     assert!(!names.contains(&"a.spec.ts".to_string()), "spec file should be excluded");
 }
 
+#[test]
+fn include_single_star_non_recursive() {
+    // `src/*.ts` should match only direct children of src, not nested files
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+
+    fs::write(dir.path().join("src/a.ts"), "export const x = 1;").unwrap();
+    fs::write(dir.path().join("src/nested/b.ts"), "export const y = 1;").unwrap();
+
+    let files = collect_files(dir.path(), &to_strings(&["src/*.ts"]), &[]);
+    let names = filenames(&files);
+
+    assert!(names.contains(&"a.ts".to_string()), "direct child should be included");
+    assert!(!names.contains(&"b.ts".to_string()), "nested file should not match src/*.ts");
+}
+
 // ─── EXCLUDE GLOB SEMANTICS ───────────────────────────────────────────────────
 
 #[test]
@@ -271,4 +287,39 @@ fn skips_jspm_packages() {
 
     assert!(names.contains(&"a.ts".to_string()));
     assert!(!names.contains(&"index.ts".to_string()), "jspm_packages should be skipped");
+}
+
+// ─── EMPTY INCLUDE (tsc: walk from project root) ──────────────────────────────
+
+#[test]
+fn empty_include_walks_from_root() {
+    // When include is empty, collect_files should walk from root and find all files.
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::create_dir_all(dir.path().join("lib")).unwrap();
+
+    fs::write(dir.path().join("src/a.ts"), "export const x = 1;").unwrap();
+    fs::write(dir.path().join("lib/b.ts"), "export const y = 1;").unwrap();
+
+    let files = collect_files(dir.path(), &[], &[]);
+    let names = filenames(&files);
+
+    assert!(names.contains(&"a.ts".to_string()), "src/a.ts should be found with empty include");
+    assert!(names.contains(&"b.ts".to_string()), "lib/b.ts should be found with empty include");
+}
+
+#[test]
+fn empty_include_respects_exclude() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::create_dir_all(dir.path().join("dist")).unwrap();
+
+    fs::write(dir.path().join("src/a.ts"), "export const x = 1;").unwrap();
+    fs::write(dir.path().join("dist/b.ts"), "export const y = 1;").unwrap();
+
+    let files = collect_files(dir.path(), &[], &to_strings(&["dist"]));
+    let names = filenames(&files);
+
+    assert!(names.contains(&"a.ts".to_string()));
+    assert!(!names.contains(&"b.ts".to_string()), "dist should be excluded");
 }

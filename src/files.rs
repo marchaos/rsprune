@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 
@@ -25,10 +25,8 @@ pub fn walk_and_parse(
     let include_set = build_glob_set(root, include, true);
     let exclude_set = build_glob_set(root, exclude, false);
 
-    let ignore_patterns: Vec<_> = ignore_patterns
-        .iter()
-        .map(|re| re.as_str().to_owned())
-        .collect();
+    // Compile regexes once; share across walker threads via Arc.
+    let ignore_patterns: Arc<Vec<regex::Regex>> = Arc::new(ignore_patterns.to_vec());
 
     // Walk on ignore's own thread pool
     std::thread::spawn(move || {
@@ -36,7 +34,7 @@ pub fn walk_and_parse(
             let tx = tx.clone();
             let include_set = include_set.clone();
             let exclude_set = exclude_set.clone();
-            let ignore_patterns = ignore_patterns.clone();
+            let ignore_patterns = Arc::clone(&ignore_patterns);
             Box::new(move |result| {
                 use ignore::WalkState;
                 let Ok(entry) = result else { return WalkState::Continue };
@@ -72,9 +70,7 @@ pub fn walk_and_parse(
                 }
 
                 let path_str = path.to_string_lossy();
-                if ignore_patterns.iter().any(|pat| {
-                    regex::Regex::new(pat).map(|re| re.is_match(&path_str)).unwrap_or(false)
-                }) {
+                if ignore_patterns.iter().any(|re| re.is_match(&path_str)) {
                     return WalkState::Continue;
                 }
 
@@ -98,17 +94,17 @@ pub fn walk_and_parse(
 
 /// Build a GlobSet from tsconfig include/exclude patterns rooted at `root`.
 ///
-/// Normalises patterns to match tsconfig semantics:
+/// Normalises patterns to match tsconfig semantics (see `normalise_tsconfig_glob`):
 /// - Bare directory name or `dir/` → `dir/**/*`
-/// - `dir/**` → `dir/**/*`
-/// - Patterns already containing `*` are used as-is
+/// - `dir/**` (no file segment) → `dir/**/*`
+/// - `**/*.test.ts` or `src/**/*.ts` → unchanged (already has a file segment)
 fn build_glob_set(root: &Path, patterns: &[String], is_include: bool) -> GlobSet {
     let mut builder = GlobSetBuilder::new();
 
     if patterns.is_empty() {
         if is_include {
             // No include patterns = match everything
-            builder.add(Glob::new("**/*").unwrap());
+            builder.add(GlobBuilder::new("**/*").literal_separator(true).build().unwrap());
         }
         return builder.build().unwrap();
     }
@@ -118,7 +114,9 @@ fn build_glob_set(root: &Path, patterns: &[String], is_include: bool) -> GlobSet
         // Make absolute by joining with root
         let abs = root.join(&normalised);
         let abs_str = abs.to_string_lossy();
-        if let Ok(glob) = Glob::new(&abs_str) {
+        // literal_separator: `*` stays within one path segment (tsc semantics),
+        // while `**` still crosses directory boundaries.
+        if let Ok(glob) = GlobBuilder::new(&abs_str).literal_separator(true).build() {
             builder.add(glob);
         }
     }
@@ -148,10 +146,12 @@ fn normalise_tsconfig_glob(pattern: &str) -> String {
 }
 
 fn build_walker(root: &Path, include: &[String]) -> WalkBuilder {
-    let bases: Vec<PathBuf> = include
-        .iter()
-        .map(|p| include_base(root, p))
-        .collect();
+    // When include is empty tsc walks from the project root.
+    let bases: Vec<PathBuf> = if include.is_empty() {
+        vec![root.to_path_buf()]
+    } else {
+        include.iter().map(|p| include_base(root, p)).collect()
+    };
 
     let mut builder = WalkBuilder::new(&bases[0]);
     for base in &bases[1..] {
