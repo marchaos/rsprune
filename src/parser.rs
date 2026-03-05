@@ -23,6 +23,8 @@ pub struct ImportInfo {
     /// - Namespace import (`* as X`) → `"*"`
     /// Empty means bare side-effect import.
     pub names: Vec<String>,
+    /// True for `export * as ns from '...'` — all exports of the target are used.
+    pub is_namespace: bool,
 }
 
 #[derive(Debug, Default)]
@@ -105,7 +107,7 @@ impl<'s, 'a> Visit<'a> for AstCollector<'s> {
                     ModuleExportName::StringLiteral(s) => s.value.to_string(),
                 })
                 .collect();
-            self.analysis.re_exports.push(ImportInfo { specifier, names });
+            self.analysis.re_exports.push(ImportInfo { specifier, names, is_namespace: false });
         } else {
             // export const/function/class/type/enum ...
             if let Some(decl_inner) = &decl.declaration {
@@ -146,15 +148,16 @@ impl<'s, 'a> Visit<'a> for AstCollector<'s> {
             return;
         }
         let specifier = decl.source.value.to_string();
+        let is_namespace = decl.exported.is_some(); // export * as ns from '...'
         let name = decl.exported.as_ref().map(|n| match n {
             ModuleExportName::IdentifierReference(id) => id.name.to_string(),
             ModuleExportName::IdentifierName(id) => id.name.to_string(),
             ModuleExportName::StringLiteral(s) => s.value.to_string(),
         });
-        // export * from '...' → empty names means "all"
         self.analysis.re_exports.push(ImportInfo {
             specifier,
             names: name.into_iter().collect(),
+            is_namespace,
         });
         walk::walk_export_all_declaration(self, decl);
     }
@@ -182,7 +185,7 @@ impl<'s, 'a> Visit<'a> for AstCollector<'s> {
                 ImportDeclarationSpecifier::ImportNamespaceSpecifier(_) => "*".to_string(),
             })
             .collect();
-        self.analysis.imports.push(ImportInfo { specifier, names });
+        self.analysis.imports.push(ImportInfo { specifier, names, is_namespace: false });
         // Note: import declarations have no child expressions to walk
     }
 
@@ -196,6 +199,7 @@ impl<'s, 'a> Visit<'a> for AstCollector<'s> {
                 // dynamic import — we don't know which names are used statically,
                 // so mark as namespace (all used)
                 names: vec!["*".to_string()],
+                is_namespace: false,
             });
         }
         // Also handle template literals with no expressions: import(`./foo`)
@@ -205,6 +209,7 @@ impl<'s, 'a> Visit<'a> for AstCollector<'s> {
                     self.analysis.imports.push(ImportInfo {
                         specifier: quasi.value.raw.to_string(),
                         names: vec!["*".to_string()],
+                        is_namespace: false,
                     });
                 }
             }
@@ -330,8 +335,8 @@ pub fn is_suppressed(source: &str, line_number: u32) -> bool {
     let prev_line_idx = (line_number - 2) as usize;
     if let Some(prev) = lines.get(prev_line_idx) {
         let trimmed = prev.trim();
-        trimmed == "// ts-unused-exports:disable-next-line"
-            || trimmed.contains("ts-unused-exports:disable-next-line")
+        trimmed.contains("ts-unused-exports:disable-next-line")
+            || trimmed.contains("rsprune:disable-next-line")
     } else {
         false
     }

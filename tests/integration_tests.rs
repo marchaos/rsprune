@@ -43,7 +43,7 @@ fn find_unused(files: &[(&str, &str)]) -> Vec<(String, String)> {
         for re_export in &analysis.re_exports {
             if let Some(resolved) = resolve_fake(files, from_dir, &re_export.specifier) {
                 let entry = used_exports.entry(resolved).or_default();
-                if re_export.names.is_empty() {
+                if re_export.names.is_empty() || re_export.is_namespace {
                     entry.insert("*".to_string());
                 } else {
                     for name in &re_export.names {
@@ -139,6 +139,15 @@ fn re_export_star_marks_all_used() {
     let files = vec![
         ("a.ts", "export const foo = 1; export const bar = 2;"),
         ("b.ts", "export * from './a';"),
+    ];
+    assert!(find_unused(&files).is_empty());
+}
+
+#[test]
+fn re_export_star_as_namespace_marks_all_used() {
+    let files = vec![
+        ("a.ts", "export const foo = 1; export const bar = 2;"),
+        ("b.ts", "export * as ns from './a';"),
     ];
     assert!(find_unused(&files).is_empty());
 }

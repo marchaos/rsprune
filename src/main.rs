@@ -134,7 +134,8 @@ fn main() -> Result<()> {
                     continue;
                 };
                 let mut entry = used_exports.entry(resolved).or_default();
-                if re_export.names.is_empty() {
+                if re_export.names.is_empty() || re_export.is_namespace {
+                    // export * from '...' or export * as ns from '...' — all exports used
                     entry.insert("*".to_string());
                 } else {
                     for name in &re_export.names {

@@ -116,6 +116,12 @@ fn build_walker(root: &Path, include: &[String], exclude: &[String]) -> WalkBuil
     builder
 }
 
+/// Extract a walkable base directory from a tsconfig include pattern.
+///
+/// Supports simple directory patterns (`src/`, `src/**`) which covers the
+/// vast majority of real-world tsconfigs. Fine-grained glob patterns like
+/// `**/*.test.ts` or negation patterns are not supported — the full directory
+/// is walked and file-level filtering is left to --ignore-files.
 fn include_base(root: &Path, pattern: &str) -> PathBuf {
     let trimmed = pattern.trim_end_matches('/').trim_end_matches("/**");
     let base = root.join(trimmed);
