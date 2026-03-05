@@ -155,3 +155,127 @@ fn suppressed_export_not_reported() {
     assert!(!stdout.contains("foo"), "suppressed export should not appear: {stdout}");
     assert!(out.status.success(), "expected exit 0 when only suppressed exports");
 }
+
+#[test]
+fn rsprune_disable_next_line_suppresses_export() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    fs::write(src.join("a.ts"), "// rsprune:disable-next-line\nexport const foo = 1;").unwrap();
+    fs::write(src.join("b.ts"), "const x = 2;").unwrap();
+    write_tsconfig(dir.path(), "src");
+
+    let out = Command::new(bin())
+        .arg("tsconfig.json")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("foo"), "rsprune-suppressed export should not appear: {stdout}");
+    assert!(out.status.success());
+}
+
+// ─── --ignore-files ───────────────────────────────────────────────────────────
+
+#[test]
+fn ignore_files_skips_matching_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    fs::write(src.join("a.ts"), "export const foo = 1;").unwrap();
+    fs::write(src.join("a.spec.ts"), "export const bar = 2;").unwrap();
+    write_tsconfig(dir.path(), "src");
+
+    // Without --ignore-files both are flagged
+    let out = Command::new(bin())
+        .arg("tsconfig.json")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("foo") && stdout.contains("bar"), "both should appear without filter");
+
+    // With --ignore-files the spec file is skipped entirely
+    let out = Command::new(bin())
+        .args(["tsconfig.json", "--ignore-files", r"\.spec\."])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("foo"), "a.ts export should still appear");
+    assert!(!stdout.contains("bar"), "spec file export should be ignored: {stdout}");
+}
+
+#[test]
+fn ignore_files_all_results_in_clean() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    fs::write(src.join("a.ts"), "export const foo = 1;").unwrap();
+    write_tsconfig(dir.path(), "src");
+
+    let out = Command::new(bin())
+        .args(["tsconfig.json", "--ignore-files", "a\\.ts"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "expected exit 0 when all files ignored");
+}
+
+// ─── --exclude-paths-from-report ─────────────────────────────────────────────
+
+#[test]
+fn exclude_paths_from_report_hides_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let internal = src.join("internal");
+    fs::create_dir_all(&internal).unwrap();
+
+    fs::write(src.join("a.ts"), "export const foo = 1;").unwrap();
+    fs::write(internal.join("b.ts"), "export const bar = 2;").unwrap();
+    write_tsconfig(dir.path(), "src");
+
+    let out = Command::new(bin())
+        .args(["tsconfig.json", "--exclude-paths-from-report", "internal"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("foo"), "a.ts export should appear");
+    assert!(!stdout.contains("bar"), "internal export should be excluded from report: {stdout}");
+}
+
+#[test]
+fn exclude_paths_from_report_affects_module_count() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    fs::write(src.join("a.ts"), "export const foo = 1;").unwrap();
+    fs::write(src.join("b.ts"), "export const bar = 2;").unwrap();
+    write_tsconfig(dir.path(), "src");
+
+    // Without exclude: 2 modules
+    let out = Command::new(bin())
+        .arg("tsconfig.json")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("2 modules"), "got: {stdout}");
+
+    // Exclude b.ts: 1 module
+    let out = Command::new(bin())
+        .args(["tsconfig.json", "--exclude-paths-from-report", "b.ts"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("1 modules"), "got: {stdout}");
+}

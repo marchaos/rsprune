@@ -243,3 +243,21 @@ fn suppression_on_wrong_line_does_not_match() {
     // comment is on line 1, export is on line 3 — not adjacent
     assert!(!is_suppressed(src, 3));
 }
+
+#[test]
+fn rsprune_disable_next_line_suppresses() {
+    let src = "// rsprune:disable-next-line\nexport const foo = 1;";
+    assert!(is_suppressed(src, 2));
+}
+
+#[test]
+fn rsprune_disable_next_line_inline_suppresses() {
+    let src = "/* rsprune:disable-next-line */\nexport const foo = 1;";
+    assert!(is_suppressed(src, 2));
+}
+
+#[test]
+fn rsprune_disable_on_wrong_line_does_not_match() {
+    let src = "// rsprune:disable-next-line\nconst x = 1;\nexport const foo = 1;";
+    assert!(!is_suppressed(src, 3));
+}
