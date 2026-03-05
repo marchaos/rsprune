@@ -7,12 +7,14 @@ on:
 
 permissions:
   contents: write
+  id-token: write  # for npm provenance
 
 jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: aarch64-apple-darwin
@@ -25,12 +27,12 @@ jobs:
             npm_pkg: rsprune-darwin-x64
             bin: rsprune
 
-          - target: x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             npm_pkg: rsprune-linux-x64
             bin: rsprune
 
-          - target: aarch64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             npm_pkg: rsprune-linux-arm64
             bin: rsprune
@@ -49,32 +51,43 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install musl tools (Linux x64)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
       - name: Install cross (ARM Linux)
         if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
 
       - name: Build (cross)
         if: matrix.cross
         run: cross build --release --target ${{ matrix.target }}
+        env:
+          RUSTFLAGS: "-C strip=symbols"
 
       - name: Build (native)
         if: "!matrix.cross"
         run: cargo build --release --target ${{ matrix.target }}
+        env:
+          RUSTFLAGS: "-C strip=symbols"
 
-      - name: Copy binary into npm package
+      - name: Stage binary
         shell: bash
         run: |
-          mkdir -p npm/${{ matrix.npm_pkg }}/bin
-          cp target/${{ matrix.target }}/release/${{ matrix.bin }} npm/${{ matrix.npm_pkg }}/bin/
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ matrix.bin }} dist/
 
-      - name: Upload binary artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.npm_pkg }}
-          path: npm/${{ matrix.npm_pkg }}/bin/
+          path: dist/
+          if-no-files-found: error
 
   publish:
-    name: Publish to npm
+    name: Publish
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -88,49 +101,53 @@ jobs:
       - name: Extract version from tag
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
 
-      - name: Update versions in package.json files
-        run: |
-          for pkg in npm/rsprune npm/rsprune-darwin-arm64 npm/rsprune-darwin-x64 npm/rsprune-linux-x64 npm/rsprune-linux-arm64 npm/rsprune-win32-x64; do
-            node -e "
-              const fs = require('fs');
-              const p = fs.readFileSync('$pkg/package.json', 'utf8');
-              const j = JSON.parse(p);
-              j.version = process.env.VERSION;
-              if (j.optionalDependencies) {
-                for (const k of Object.keys(j.optionalDependencies)) {
-                  j.optionalDependencies[k] = process.env.VERSION;
-                }
-              }
-              fs.writeFileSync('$pkg/package.json', JSON.stringify(j, null, 2) + '\n');
-            "
-          done
-
       - name: Download all binaries
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Place binaries into npm packages
+      - name: Place binaries into npm packages and set versions
+        shell: bash
         run: |
           for pkg in rsprune-darwin-arm64 rsprune-darwin-x64 rsprune-linux-x64 rsprune-linux-arm64 rsprune-win32-x64; do
             mkdir -p npm/$pkg/bin
             cp artifacts/$pkg/* npm/$pkg/bin/
-            chmod +x npm/$pkg/bin/* || true
+            chmod +x npm/$pkg/bin/* 2>/dev/null || true
+            # Update version in package.json
+            node -e "
+              const fs = require('fs');
+              const p = JSON.parse(fs.readFileSync('npm/$pkg/package.json', 'utf8'));
+              p.version = process.env.VERSION;
+              fs.writeFileSync('npm/$pkg/package.json', JSON.stringify(p, null, 2) + '\n');
+            "
           done
+          # Update main package version + optionalDependencies
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('npm/rsprune/package.json', 'utf8'));
+            p.version = process.env.VERSION;
+            for (const k of Object.keys(p.optionalDependencies)) {
+              p.optionalDependencies[k] = process.env.VERSION;
+            }
+            fs.writeFileSync('npm/rsprune/package.json', JSON.stringify(p, null, 2) + '\n');
+          "
 
       - name: Publish platform packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for pkg in rsprune-darwin-arm64 rsprune-darwin-x64 rsprune-linux-x64 rsprune-linux-arm64 rsprune-win32-x64; do
-            cd npm/$pkg
-            npm publish --access public
-            cd ../..
+            npm publish npm/$pkg --access public --provenance
           done
 
       - name: Publish main package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          cd npm/rsprune
-          npm publish --access public
+        run: npm publish npm/rsprune --access public --provenance
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ env.VERSION }}
+          generate_release_notes: true
+          files: artifacts/**/*
