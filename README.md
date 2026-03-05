@@ -78,9 +78,11 @@ Format: `file[line,col]: exportName` (1-indexed lines, 0-indexed columns).
 Add a comment on the line before the export:
 
 ```ts
-// ts-unused-exports:disable-next-line
+// rsprune:disable-next-line
 export const internalHelper = () => {};
 ```
+
+The `ts-unused-exports:disable-next-line` comment is also supported for compatibility with existing codebases.
 
 ## 🛠️ Development
 
