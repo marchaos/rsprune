@@ -2,21 +2,18 @@ use std::path::{Path, PathBuf};
 
 use oxc_resolver::{ResolveOptions, Resolver, TsconfigDiscovery, TsconfigOptions, TsconfigReferences};
 
+use crate::EXTENSIONS;
+
 /// Build an oxc_resolver that understands the tsconfig paths/baseUrl.
 pub fn build_resolver(tsconfig_path: &Path) -> Resolver {
+    let extensions: Vec<String> = EXTENSIONS
+        .iter()
+        .map(|e| format!(".{e}"))
+        .chain([".d.ts".to_string(), ".json".to_string()])
+        .collect();
+
     let opts = ResolveOptions {
-        extensions: vec![
-            ".ts".into(),
-            ".tsx".into(),
-            ".js".into(),
-            ".jsx".into(),
-            ".mts".into(),
-            ".cts".into(),
-            ".mjs".into(),
-            ".cjs".into(),
-            ".d.ts".into(),
-            ".json".into(),
-        ],
+        extensions,
         tsconfig: Some(TsconfigDiscovery::Manual(TsconfigOptions {
             config_file: tsconfig_path.to_path_buf(),
             references: TsconfigReferences::Auto,

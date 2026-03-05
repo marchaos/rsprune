@@ -4,9 +4,7 @@ use std::sync::mpsc;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 
-use crate::parser::{self, FileAnalysis};
-
-static EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"];
+use crate::{parser::{self, FileAnalysis}, EXTENSIONS};
 
 /// Walk all include directories and parse each file in parallel.
 ///
