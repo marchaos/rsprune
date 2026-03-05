@@ -1,6 +1,6 @@
 # rsprune ✂️
 
-**Blazing fast unused TypeScript export finder** — a Rust-powered drop-in replacement for [ts-unused-exports](https://github.com/pzavolinsky/ts-unused-exports), ~30x faster.
+**Blazing fast unused export finder for TypeScript and JavaScript** — a Rust-powered drop-in replacement for [ts-unused-exports](https://github.com/pzavolinsky/ts-unused-exports), ~30x faster.
 
 ## ⚡ Performance
 
