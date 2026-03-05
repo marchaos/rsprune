@@ -126,7 +126,7 @@ fn output_includes_line_number_by_default() {
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     // Should include [line,col] format
-    assert!(stdout.contains("[0,"), "expected [line,col] format, got: {stdout}");
+    assert!(stdout.contains("[1,"), "expected [line,col] format, got: {stdout}");
 }
 
 // ─── SUPPRESSION COMMENT ──────────────────────────────────────────────────────

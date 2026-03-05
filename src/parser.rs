@@ -308,7 +308,7 @@ impl<'s> AstCollector<'s> {
 pub fn offset_to_line_col(source: &str, offset: usize) -> (u32, u32) {
     let bytes = source.as_bytes();
     let offset = offset.min(bytes.len());
-    let mut line = 0u32;
+    let mut line = 1u32;
     let mut last_newline = 0usize;
     for (i, &b) in bytes[..offset].iter().enumerate() {
         if b == b'\n' {
@@ -320,14 +320,14 @@ pub fn offset_to_line_col(source: &str, offset: usize) -> (u32, u32) {
     (line, col)
 }
 
-/// Returns true if the line immediately preceding `line_number` (0-indexed) contains
+/// Returns true if the line immediately preceding `line_number` (1-indexed) contains
 /// a `// ts-unused-exports:disable-next-line` comment.
 pub fn is_suppressed(source: &str, line_number: u32) -> bool {
-    if line_number == 0 {
+    if line_number <= 1 {
         return false;
     }
     let lines: Vec<&str> = source.split('\n').collect();
-    let prev_line_idx = (line_number - 1) as usize;
+    let prev_line_idx = (line_number - 2) as usize;
     if let Some(prev) = lines.get(prev_line_idx) {
         let trimmed = prev.trim();
         trimmed == "// ts-unused-exports:disable-next-line"

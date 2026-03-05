@@ -183,7 +183,18 @@ fn main() -> Result<()> {
         eprintln!("[timing] {:30} {:>8.1}ms  (TOTAL)", "wall time", t_total.elapsed().as_secs_f64() * 1000.0);
     }
 
-    let module_count = unused.len();
+    let output: Vec<_> = unused
+        .iter()
+        .filter(|(path, _)| {
+            let path_str = path.to_string_lossy();
+            !args
+                .exclude_paths_from_report
+                .iter()
+                .any(|ex| path_str.contains(ex.as_str()))
+        })
+        .collect();
+
+    let module_count = output.len();
 
     if module_count == 0 {
         println!("0 modules with unused exports");
@@ -192,23 +203,11 @@ fn main() -> Result<()> {
 
     println!("{module_count} modules with unused exports");
 
-    for (path, exports) in &unused {
+    for (path, exports) in &output {
         let path_str = path.to_string_lossy();
-
-        if args
-            .exclude_paths_from_report
-            .iter()
-            .any(|ex| path_str.contains(ex.as_str()))
-        {
-            continue;
-        }
-
-        for export in exports {
+        for export in exports.iter() {
             if args.show_line_number {
-                println!(
-                    "{path_str}[{},{}]: {}",
-                    export.line, export.col, export.name
-                );
+                println!("{path_str}[{},{}]: {}", export.line, export.col, export.name);
             } else {
                 println!("{path_str}: {}", export.name);
             }

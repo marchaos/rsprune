@@ -199,15 +199,15 @@ fn detects_star_as_re_export() {
 // ─── LINE/COL NUMBERS ────────────────────────────────────────────────────────
 
 #[test]
-fn line_number_is_zero_indexed() {
+fn line_number_is_one_indexed() {
     let exports = ts("export const x = 1;");
-    assert_eq!(exports[0].line, 0);
+    assert_eq!(exports[0].line, 1);
 }
 
 #[test]
 fn line_number_second_line() {
     let exports = ts("\nexport const x = 1;");
-    assert_eq!(exports[0].line, 1);
+    assert_eq!(exports[0].line, 2);
 }
 
 #[test]
@@ -228,18 +228,18 @@ fn handles_tsx_jsx_export() {
 #[test]
 fn suppression_comment_detected_on_preceding_line() {
     let src = "const x = 1;\n// ts-unused-exports:disable-next-line\nexport const foo = 1;";
-    assert!(is_suppressed(src, 2)); // line 2 (0-indexed) has the export
+    assert!(is_suppressed(src, 3)); // line 3 (1-indexed) has the export
 }
 
 #[test]
 fn no_suppression_without_comment() {
     let src = "export const foo = 1;";
-    assert!(!is_suppressed(src, 0));
+    assert!(!is_suppressed(src, 1));
 }
 
 #[test]
 fn suppression_on_wrong_line_does_not_match() {
     let src = "// ts-unused-exports:disable-next-line\nconst x = 1;\nexport const foo = 1;";
-    // comment is above line 1, not line 2
-    assert!(!is_suppressed(src, 2));
+    // comment is on line 1, export is on line 3 — not adjacent
+    assert!(!is_suppressed(src, 3));
 }

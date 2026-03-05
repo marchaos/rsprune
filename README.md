@@ -50,7 +50,7 @@ src/utils/helpers.ts[12,0]: unusedFn
 src/components/Button.tsx[34,7]: ButtonProps
 ```
 
-Format: `file[line,col]: exportName` (0-indexed lines).
+Format: `file[line,col]: exportName` (1-indexed lines, 0-indexed columns).
 
 ## Installation
 
