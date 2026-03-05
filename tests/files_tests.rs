@@ -175,3 +175,100 @@ fn collects_all_supported_extensions() {
     let files = collect_files(dir.path(), &to_strings(&["src"]), &[]);
     assert_eq!(files.len(), 8, "all 8 supported extensions should be collected");
 }
+
+// ─── GLOB NORMALISATION EDGE CASES ───────────────────────────────────────────
+
+#[test]
+fn include_dir_double_star_pattern() {
+    // `src/**` should behave the same as `src` — include all files under src
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+    fs::create_dir_all(dir.path().join("other")).unwrap();
+
+    fs::write(dir.path().join("src/a.ts"), "export const x = 1;").unwrap();
+    fs::write(dir.path().join("src/nested/b.ts"), "export const y = 1;").unwrap();
+    fs::write(dir.path().join("other/c.ts"), "export const z = 1;").unwrap();
+
+    let files = collect_files(dir.path(), &to_strings(&["src/**"]), &[]);
+    let names = filenames(&files);
+
+    assert!(names.contains(&"a.ts".to_string()), "top-level file should be included");
+    assert!(names.contains(&"b.ts".to_string()), "nested file should be included");
+    assert!(!names.contains(&"c.ts".to_string()), "other/ should not be included");
+}
+
+#[test]
+fn include_dir_with_trailing_slash() {
+    // `src/` should behave the same as `src`
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::create_dir_all(dir.path().join("other")).unwrap();
+
+    fs::write(dir.path().join("src/a.ts"), "export const x = 1;").unwrap();
+    fs::write(dir.path().join("other/b.ts"), "export const y = 1;").unwrap();
+
+    let files = collect_files(dir.path(), &to_strings(&["src/"]), &[]);
+    let names = filenames(&files);
+
+    assert!(names.contains(&"a.ts".to_string()));
+    assert!(!names.contains(&"b.ts".to_string()));
+}
+
+#[test]
+fn exclude_dir_double_star_pattern() {
+    // `src/test/**` should exclude all files under src/test
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src/test")).unwrap();
+    fs::create_dir_all(dir.path().join("src/main")).unwrap();
+
+    fs::write(dir.path().join("src/test/a.ts"), "export const x = 1;").unwrap();
+    fs::write(dir.path().join("src/main/b.ts"), "export const y = 1;").unwrap();
+
+    let files = collect_files(
+        dir.path(),
+        &to_strings(&["src"]),
+        &to_strings(&["src/test/**"]),
+    );
+    let names = filenames(&files);
+
+    assert!(names.contains(&"b.ts".to_string()));
+    assert!(!names.contains(&"a.ts".to_string()), "test dir should be excluded via src/test/**");
+}
+
+// ─── DEFAULT TSCONFIG EXCLUSIONS ─────────────────────────────────────────────
+
+#[test]
+fn skips_bower_components() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let bower = dir.path().join("src/bower_components/pkg");
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&bower).unwrap();
+
+    fs::write(src.join("a.ts"), "export const x = 1;").unwrap();
+    fs::write(bower.join("index.ts"), "export const y = 1;").unwrap();
+
+    let files = collect_files(dir.path(), &to_strings(&["src"]), &[]);
+    let names = filenames(&files);
+
+    assert!(names.contains(&"a.ts".to_string()));
+    assert!(!names.contains(&"index.ts".to_string()), "bower_components should be skipped");
+}
+
+#[test]
+fn skips_jspm_packages() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    let jspm = dir.path().join("src/jspm_packages/pkg");
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&jspm).unwrap();
+
+    fs::write(src.join("a.ts"), "export const x = 1;").unwrap();
+    fs::write(jspm.join("index.ts"), "export const y = 1;").unwrap();
+
+    let files = collect_files(dir.path(), &to_strings(&["src"]), &[]);
+    let names = filenames(&files);
+
+    assert!(names.contains(&"a.ts".to_string()));
+    assert!(!names.contains(&"index.ts".to_string()), "jspm_packages should be skipped");
+}

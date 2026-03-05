@@ -41,8 +41,12 @@ pub fn walk_and_parse(
                 use ignore::WalkState;
                 let Ok(entry) = result else { return WalkState::Continue };
 
-                // Prune node_modules
-                if entry.file_name() == "node_modules" {
+                // Prune default tsconfig-excluded directories
+                let fname = entry.file_name();
+                if fname == "node_modules"
+                    || fname == "bower_components"
+                    || fname == "jspm_packages"
+                {
                     return WalkState::Skip;
                 }
 
@@ -132,7 +136,11 @@ fn build_glob_set(root: &Path, patterns: &[String], is_include: bool) -> GlobSet
 fn normalise_tsconfig_glob(pattern: &str) -> String {
     let p = pattern.trim_end_matches('/');
     if p.contains('*') || p.contains('?') {
-        // Already a glob — use as-is
+        // Ends with `/**` (no trailing file segment) → append `/*`
+        if p.ends_with("/**") {
+            return format!("{p}/*");
+        }
+        // Already a full glob — use as-is
         return p.to_string();
     }
     // Bare path — treat as directory, recurse into all files
@@ -203,7 +211,10 @@ pub fn collect_files(root: &Path, include: &[String], exclude: &[String]) -> Vec
             Box::new(move |result| {
                 use ignore::WalkState;
                 let Ok(entry) = result else { return WalkState::Continue };
-                if entry.file_name() == "node_modules" { return WalkState::Skip; }
+                let fname = entry.file_name();
+                if fname == "node_modules" || fname == "bower_components" || fname == "jspm_packages" {
+                    return WalkState::Skip;
+                }
                 let Some(ft) = entry.file_type() else { return WalkState::Continue };
                 if !ft.is_file() { return WalkState::Continue; }
                 let path = entry.path();
