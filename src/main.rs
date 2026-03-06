@@ -14,9 +14,8 @@ use crate::parser::FileAnalysis;
 #[derive(Parser, Debug)]
 #[command(name = "rsprune", about = "Find unused TypeScript exports (fast Rust reimplementation)")]
 struct Args {
-    /// Path to tsconfig.json
-    #[arg(default_value = "tsconfig.json")]
-    tsconfig: PathBuf,
+    /// Path to tsconfig.json (optional — walks up from cwd if omitted)
+    tsconfig: Option<PathBuf>,
 
     /// Show line numbers in output (like ts-unused-exports --showLineNumber)
     #[arg(long, default_value_t = true)]
@@ -50,10 +49,11 @@ fn main() -> Result<()> {
     let t_total = Instant::now();
     let args = Args::parse();
 
-    let tsconfig_path = args
-        .tsconfig
-        .canonicalize()
-        .unwrap_or_else(|_| args.tsconfig.clone());
+    let tsconfig_path = match args.tsconfig {
+        Some(p) => p.canonicalize().unwrap_or(p),
+        None => find_tsconfig()
+            .ok_or_else(|| anyhow::anyhow!("No tsconfig.json found in current directory or any parent directory"))?,
+    };
 
     let config = phase!(args.timing, "tsconfig parse", {
         tsconfig::TsConfig::load(&tsconfig_path)?
@@ -220,4 +220,18 @@ fn main() -> Result<()> {
     }
 
     std::process::exit(1);
+}
+
+/// Walk up from cwd looking for tsconfig.json, mirroring tsc's behaviour.
+fn find_tsconfig() -> Option<PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        let candidate = dir.join("tsconfig.json");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
 }
