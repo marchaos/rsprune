@@ -1,5 +1,5 @@
 {
-  "name": "rsprune-win32-x64",
+  "name": "rsprune-windows-x64",
   "version": "0.1.0",
   "description": "rsprune binary for Windows x64",
   "os": [

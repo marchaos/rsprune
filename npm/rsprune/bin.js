@@ -8,7 +8,7 @@ const PLATFORM_MAP = {
   'darwin-x64':   'rsprune-darwin-x64',
   'linux-x64':    'rsprune-linux-x64',
   'linux-arm64':  'rsprune-linux-arm64',
-  'win32-x64':    'rsprune-win32-x64',
+  'win32-x64':    'rsprune-windows-x64',
 };
 
 const key = `${process.platform}-${process.arch}`;

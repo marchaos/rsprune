@@ -13,7 +13,7 @@
     "rsprune-darwin-x64": "0.1.0",
     "rsprune-linux-x64": "0.1.0",
     "rsprune-linux-arm64": "0.1.0",
-    "rsprune-win32-x64": "0.1.0"
+    "rsprune-windows-x64": "0.1.0"
   },
   "repository": {
     "type": "git",

@@ -44,7 +44,7 @@ jobs:
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            npm_pkg: rsprune-win32-x64
+            npm_pkg: rsprune-windows-x64
             bin: rsprune.exe
 
     steps:
@@ -118,7 +118,7 @@ jobs:
       - name: Place binaries into npm packages and set versions
         shell: bash
         run: |
-          for pkg in rsprune-darwin-arm64 rsprune-darwin-x64 rsprune-linux-x64 rsprune-linux-arm64 rsprune-win32-x64; do
+          for pkg in rsprune-darwin-arm64 rsprune-darwin-x64 rsprune-linux-x64 rsprune-linux-arm64 rsprune-windows-x64; do
             mkdir -p npm/$pkg/bin
             cp artifacts/$pkg/* npm/$pkg/bin/
             chmod +x npm/$pkg/bin/* 2>/dev/null || true
@@ -148,7 +148,7 @@ jobs:
 
       - name: Publish platform packages
         run: |
-          for pkg in rsprune-darwin-arm64 rsprune-darwin-x64 rsprune-linux-x64 rsprune-linux-arm64 rsprune-win32-x64; do
+          for pkg in rsprune-darwin-arm64 rsprune-darwin-x64 rsprune-linux-x64 rsprune-linux-arm64 rsprune-windows-x64; do
             (cd npm/$pkg && npm publish --access public)
           done
 
