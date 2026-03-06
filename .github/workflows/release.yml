@@ -12,7 +12,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write  # for npm provenance
 
 jobs:
   build:
@@ -142,13 +141,13 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for pkg in rsprune-darwin-arm64 rsprune-darwin-x64 rsprune-linux-x64 rsprune-linux-arm64 rsprune-win32-x64; do
-            npm publish npm/$pkg --access public --provenance
+            npm publish npm/$pkg --access public
           done
 
       - name: Publish main package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish npm/rsprune --access public --provenance
+        run: npm publish npm/rsprune --access public
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
