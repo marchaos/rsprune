@@ -2,12 +2,22 @@
   "name": "rsprune-darwin-x64",
   "version": "0.1.0",
   "description": "rsprune binary for macOS x64",
-  "os": ["darwin"],
-  "cpu": ["x64"],
-  "files": ["bin/"],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/"
+  ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/marchaos/rsprune.git"
+    "url": "git+https://github.com/marchaos/rsprune.git"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  }
 }

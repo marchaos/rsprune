@@ -17,10 +17,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/marchaos/rsprune.git"
+    "url": "git+https://github.com/marchaos/rsprune.git"
   },
   "license": "MIT",
   "engines": {
     "node": ">=14"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   }
 }

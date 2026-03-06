@@ -136,18 +136,19 @@ jobs:
             fs.writeFileSync('npm/rsprune/package.json', JSON.stringify(p, null, 2) + '\n');
           "
 
-      - name: Publish platform packages
+      - name: Authenticate with npm registry
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
+
+      - name: Publish platform packages
         run: |
           for pkg in rsprune-darwin-arm64 rsprune-darwin-x64 rsprune-linux-x64 rsprune-linux-arm64 rsprune-win32-x64; do
-            npm publish npm/$pkg --access public
+            (cd npm/$pkg && npm publish --access public)
           done
 
       - name: Publish main package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish npm/rsprune --access public
+        run: (cd npm/rsprune && npm publish --access public)
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
