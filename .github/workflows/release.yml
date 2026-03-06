@@ -149,11 +149,20 @@ jobs:
       - name: Publish platform packages
         run: |
           for pkg in rsprune-darwin-arm64 rsprune-darwin-x64 rsprune-linux-x64 rsprune-linux-arm64 rsprune-windows-x64; do
-            (cd npm/$pkg && npm publish --access public)
+            if npm view "$pkg@$VERSION" version &>/dev/null; then
+              echo "$pkg@$VERSION already published, skipping"
+            else
+              (cd npm/$pkg && npm publish --access public)
+            fi
           done
 
       - name: Publish main package
-        run: (cd npm/rsprune && npm publish --access public)
+        run: |
+          if npm view "rsprune@$VERSION" version &>/dev/null; then
+            echo "rsprune@$VERSION already published, skipping"
+          else
+            (cd npm/rsprune && npm publish --access public)
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
