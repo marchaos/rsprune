@@ -36,6 +36,11 @@ struct Args {
     /// Treat files loaded by `import.meta.webpackContext(...)` or `require.context(...)` as fully used
     #[arg(long)]
     bundler_contexts: bool,
+
+    /// Regex patterns of test file paths. Also reports exports of other files that are only used by
+    /// these files and not referenced inside their own module.
+    #[arg(long)]
+    test_files: Vec<String>,
 }
 
 macro_rules! phase {
@@ -75,6 +80,16 @@ fn main() -> Result<()> {
         }
     }
 
+    let test_patterns: Vec<regex::Regex> = args
+        .test_files
+        .iter()
+        .filter_map(|p| regex::Regex::new(p).ok())
+        .collect();
+    let is_test_file = |path: &Path| {
+        let path_str = path.to_string_lossy();
+        test_patterns.iter().any(|pattern| pattern.is_match(&path_str))
+    };
+
     let ignore_patterns: Vec<regex::Regex> = args
         .ignore_files
         .iter()
@@ -102,16 +117,15 @@ fn main() -> Result<()> {
     // Map: path -> set of exported names used by other files.
     // DashMap allows parallel writes from rayon threads.
     let used_exports: DashMap<PathBuf, HashSet<String>> = DashMap::new();
+    // The same, counting only usages from files that don't match --test-files.
+    let used_outside_tests: DashMap<PathBuf, HashSet<String>> = DashMap::new();
 
-    let record = |resolved: PathBuf, names: &[String]| {
-        let mut entry = used_exports.entry(resolved).or_default();
-        if names.is_empty() {
-            entry.insert("__sideeffect__".to_string());
-        } else {
-            for name in names {
-                entry.insert(name.clone());
-            }
+    let record = |resolved: PathBuf, names: &[String], from_path: &Path| {
+        let names = if names.is_empty() { vec!["__sideeffect__".to_string()] } else { names.to_vec() };
+        if !is_test_file(from_path) {
+            used_outside_tests.entry(resolved.clone()).or_default().extend(names.iter().cloned());
         }
+        used_exports.entry(resolved).or_default().extend(names);
     };
 
     // Resolve imports in parallel — Resolver is Sync, DashMap allows concurrent inserts
@@ -129,7 +143,7 @@ fn main() -> Result<()> {
                 else {
                     continue;
                 };
-                record(resolved, &import.names);
+                record(resolved, &import.names, from_path);
             }
 
             for re_export in &analysis.re_exports {
@@ -141,14 +155,11 @@ fn main() -> Result<()> {
                 else {
                     continue;
                 };
-                let mut entry = used_exports.entry(resolved).or_default();
                 if re_export.names.is_empty() || re_export.is_namespace {
                     // export * from '...' or export * as ns from '...' — all exports used
-                    entry.insert("*".to_string());
+                    record(resolved, &["*".to_string()], from_path);
                 } else {
-                    for name in &re_export.names {
-                        entry.insert(name.clone());
-                    }
+                    record(resolved, &re_export.names, from_path);
                 }
             }
         });
@@ -161,7 +172,7 @@ fn main() -> Result<()> {
                 for context in &analysis.contexts {
                     let candidates = analyses.iter().map(|(path, _, _)| path.as_path());
                     match contexts::matching_files(context, from_path, candidates) {
-                        Ok(matched) => matched.into_iter().for_each(|path| record(path, &all_names)),
+                        Ok(matched) => matched.into_iter().for_each(|path| record(path, &all_names, from_path)),
                         Err(error) => eprintln!(
                             "rsprune: skipping bundler context in {}: {error}",
                             from_path.display()
@@ -172,76 +183,100 @@ fn main() -> Result<()> {
         });
     }
 
-    // Find unused exports
-    let mut unused: Vec<(PathBuf, Vec<parser::ExportInfo>)> = phase!(args.timing, "find unused", {
-        let mut unused = Vec::new();
+    let is_used = |usages: &DashMap<PathBuf, HashSet<String>>, path: &Path, export: &parser::ExportInfo| {
+        usages
+            .get(path)
+            .is_some_and(|set| set.contains("*") || set.contains(&export.name))
+    };
+
+    // Find unused exports, and (with --test-files) exports only used by tests
+    let (mut unused, mut test_only) = phase!(args.timing, "find unused", {
+        let mut unused: Vec<(PathBuf, Vec<parser::ExportInfo>)> = Vec::new();
+        let mut test_only: Vec<(PathBuf, Vec<parser::ExportInfo>)> = Vec::new();
         for (path, analysis, source) in &analyses {
             if analysis.exports.is_empty() {
                 continue;
             }
-            let used = used_exports.get(path.as_path());
+            let check_test_only = !test_patterns.is_empty() && !is_test_file(path);
             let mut unused_in_file: Vec<parser::ExportInfo> = Vec::new();
+            let mut test_only_in_file: Vec<parser::ExportInfo> = Vec::new();
 
             for export in &analysis.exports {
-                let is_used = match &used {
-                    None => false,
-                    Some(set) => {
-                        set.contains("*")
-                            || set.contains(&export.name)
-                            || (export.name == "default" && set.contains("default"))
-                    }
-                };
-                if !is_used && !parser::is_suppressed(source, export.line) {
+                if parser::is_suppressed(source, export.line) {
+                    continue;
+                }
+                if !is_used(&used_exports, path, export) {
                     unused_in_file.push(export.clone());
+                } else if check_test_only
+                    && !analysis.is_used_in_module(export)
+                    // Exports of the same binding (e.g. `export const Foo` and `export default Foo`) are aliases.
+                    && !analysis.exports.iter().any(|alias| {
+                        analysis.local_name(alias) == analysis.local_name(export)
+                            && is_used(&used_outside_tests, path, alias)
+                    })
+                {
+                    test_only_in_file.push(export.clone());
                 }
             }
 
             if !unused_in_file.is_empty() {
                 unused.push((path.clone(), unused_in_file));
             }
+            if !test_only_in_file.is_empty() {
+                test_only.push((path.clone(), test_only_in_file));
+            }
         }
-        unused
+        (unused, test_only)
     });
 
     // Sort by path for deterministic output
     unused.sort_by(|a, b| a.0.cmp(&b.0));
+    test_only.sort_by(|a, b| a.0.cmp(&b.0));
 
     if args.timing {
         eprintln!("[timing] {:30} {:>8.1}ms  (TOTAL)", "wall time", t_total.elapsed().as_secs_f64() * 1000.0);
     }
 
-    let output: Vec<_> = unused
-        .iter()
-        .filter(|(path, _)| {
+    let reported = |modules: Vec<(PathBuf, Vec<parser::ExportInfo>)>| -> Vec<(PathBuf, Vec<parser::ExportInfo>)> {
+        modules
+            .into_iter()
+            .filter(|(path, _)| {
+                let path_str = path.to_string_lossy();
+                !args
+                    .exclude_paths_from_report
+                    .iter()
+                    .any(|ex| path_str.contains(ex.as_str()))
+            })
+            .collect()
+    };
+    let print_exports = |modules: &[(PathBuf, Vec<parser::ExportInfo>)]| {
+        for (path, exports) in modules {
             let path_str = path.to_string_lossy();
-            !args
-                .exclude_paths_from_report
-                .iter()
-                .any(|ex| path_str.contains(ex.as_str()))
-        })
-        .collect();
-
-    let module_count = output.len();
-
-    if module_count == 0 {
-        println!("0 modules with unused exports");
-        return Ok(());
-    }
-
-    println!("{module_count} modules with unused exports");
-
-    for (path, exports) in &output {
-        let path_str = path.to_string_lossy();
-        for export in exports.iter() {
-            if args.show_line_number {
-                println!("{path_str}[{},{}]: {}", export.line, export.col, export.name);
-            } else {
-                println!("{path_str}: {}", export.name);
+            for export in exports.iter() {
+                if args.show_line_number {
+                    println!("{path_str}[{},{}]: {}", export.line, export.col, export.name);
+                } else {
+                    println!("{path_str}: {}", export.name);
+                }
             }
         }
+    };
+
+    let unused = reported(unused);
+    let test_only = reported(test_only);
+
+    println!("{} modules with unused exports", unused.len());
+    print_exports(&unused);
+
+    if !test_patterns.is_empty() {
+        println!("{} modules with exports only used by tests", test_only.len());
+        print_exports(&test_only);
     }
 
-    std::process::exit(1);
+    if !unused.is_empty() || !test_only.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// Walk up from cwd looking for tsconfig.json, mirroring tsc's behaviour.

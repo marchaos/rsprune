@@ -404,3 +404,99 @@ fn non_recursive_context_skips_subdirectories() {
     assert!(!stdout.contains("/a/config.ts["), "got: {stdout}");
     assert!(stdout.contains("nested/config.ts"), "got: {stdout}");
 }
+
+// ─── TEST-ONLY EXPORTS ────────────────────────────────────────────────────────
+
+/// Writes a project where `lib.ts` exports are used by `app.ts` and `lib.spec.ts`,
+/// and returns rsprune's exit status and stdout.
+fn run_with_tests(lib: &str, app: &str, spec: &str, extra_args: &[&str]) -> (bool, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+
+    fs::write(src.join("lib.ts"), lib).unwrap();
+    fs::write(src.join("app.ts"), app).unwrap();
+    fs::write(src.join("lib.spec.ts"), spec).unwrap();
+    write_tsconfig(dir.path(), "src");
+
+    let out = Command::new(bin())
+        .arg("tsconfig.json")
+        .args(extra_args)
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    (out.status.success(), String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+#[test]
+fn test_only_exports_are_not_reported_without_the_flag() {
+    let (success, stdout) = run_with_tests(
+        "export const used = 1; export const testOnly = 2;",
+        "import { used } from './lib';",
+        "import { testOnly } from './lib';",
+        &[],
+    );
+    assert!(success, "got: {stdout}");
+    assert_eq!(stdout, "0 modules with unused exports\n");
+}
+
+#[test]
+fn exports_only_used_by_tests_are_reported() {
+    let (success, stdout) = run_with_tests(
+        "export const used = 1; export const testOnly = 2;",
+        "import { used } from './lib';",
+        "import { used, testOnly } from './lib';",
+        &["--test-files", r"\.spec\."],
+    );
+    assert!(!success, "expected exit 1, got: {stdout}");
+    assert!(stdout.contains("0 modules with unused exports"), "got: {stdout}");
+    assert!(stdout.contains("1 modules with exports only used by tests"), "got: {stdout}");
+    assert!(stdout.contains("lib.ts[1,36]: testOnly"), "got: {stdout}");
+    assert!(!stdout.contains(": used"), "got: {stdout}");
+}
+
+#[test]
+fn test_only_exports_used_in_their_module_are_not_reported() {
+    let (success, stdout) = run_with_tests(
+        "export const helper = 1; export const used = helper + 1;",
+        "import { used } from './lib';",
+        "import { helper } from './lib';",
+        &["--test-files", r"\.spec\."],
+    );
+    assert!(success, "got: {stdout}");
+    assert!(stdout.contains("0 modules with exports only used by tests"), "got: {stdout}");
+}
+
+#[test]
+fn test_only_export_is_not_reported_when_an_alias_is_used() {
+    let (success, stdout) = run_with_tests(
+        "export const Component = 1; export default Component;",
+        "import Component from './lib';",
+        "import { Component } from './lib';",
+        &["--test-files", r"\.spec\."],
+    );
+    assert!(success, "got: {stdout}");
+}
+
+#[test]
+fn namespace_import_from_a_test_is_test_only_usage() {
+    let (success, stdout) = run_with_tests(
+        "export const used = 1; export const testOnly = 2;",
+        "import { used } from './lib';",
+        "import * as lib from './lib';",
+        &["--test-files", r"\.spec\."],
+    );
+    assert!(!success, "expected exit 1, got: {stdout}");
+    assert!(stdout.contains(": testOnly"), "got: {stdout}");
+}
+
+#[test]
+fn test_only_exports_can_be_suppressed() {
+    let (success, stdout) = run_with_tests(
+        "export const used = 1;\n// rsprune:disable-next-line\nexport const testOnly = 2;",
+        "import { used } from './lib';",
+        "import { testOnly } from './lib';",
+        &["--test-files", r"\.spec\."],
+    );
+    assert!(success, "got: {stdout}");
+}

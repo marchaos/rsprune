@@ -314,3 +314,41 @@ fn ignores_context_calls_without_a_literal_directory() {
 fn ignores_other_context_calls() {
     assert!(contexts("foo.context('./x'); import.meta.glob('./x'); webpackContext('./x');").is_empty());
 }
+
+// ─── IN-MODULE USAGE ──────────────────────────────────────────────────────────
+
+fn used_in_module(src: &str) -> Vec<String> {
+    let analysis = analyze_file(Path::new("test.ts"), src);
+    analysis
+        .exports
+        .iter()
+        .filter(|export| analysis.is_used_in_module(export))
+        .map(|export| export.name.clone())
+        .collect()
+}
+
+#[test]
+fn export_referenced_in_its_module_is_used_in_module() {
+    let used = used_in_module("export const foo = 1; export const bar = foo + 1;");
+    assert_eq!(used, vec!["foo"]);
+}
+
+#[test]
+fn export_clause_is_not_a_use_in_module() {
+    let used = used_in_module("const foo = 1; export { foo };");
+    assert!(used.is_empty(), "got: {used:?}");
+}
+
+#[test]
+fn renamed_export_is_used_in_module_through_its_local_name() {
+    let used = used_in_module("const foo = 1; export { foo as bar }; console.log(foo);");
+    assert_eq!(used, vec!["bar"]);
+}
+
+#[test]
+fn default_export_of_identifier_shares_the_local_name() {
+    let analysis = analyze_file(Path::new("test.ts"), "export const Foo = 1; export default Foo;");
+    let names: Vec<&str> = analysis.exports.iter().map(|export| analysis.local_name(export)).collect();
+    assert_eq!(names, vec!["Foo", "Foo"]);
+    assert!(analysis.exports.iter().all(|export| !analysis.is_used_in_module(export)));
+}
