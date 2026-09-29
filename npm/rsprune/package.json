@@ -1,6 +1,6 @@
 {
   "name": "rsprune",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Fast unused TypeScript export finder",
   "bin": {
     "rsprune": "bin.js"
@@ -9,11 +9,11 @@
     "bin.js"
   ],
   "optionalDependencies": {
-    "rsprune-darwin-arm64": "0.2.0",
-    "rsprune-darwin-x64": "0.2.0",
-    "rsprune-linux-x64": "0.2.0",
-    "rsprune-linux-arm64": "0.2.0",
-    "rsprune-windows-x64": "0.2.0"
+    "rsprune-darwin-arm64": "0.3.0",
+    "rsprune-darwin-x64": "0.3.0",
+    "rsprune-linux-x64": "0.3.0",
+    "rsprune-linux-arm64": "0.3.0",
+    "rsprune-windows-x64": "0.3.0"
   },
   "repository": {
     "type": "git",
