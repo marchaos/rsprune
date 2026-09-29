@@ -14,6 +14,7 @@ Benchmarked on a ~6,300 file TypeScript codebase:
 ## ✨ Features
 
 - 🔍 Detects named, default, re-exports, type exports, enums, interfaces, and dynamic `import()`
+- 🧩 Optionally follows `import.meta.webpackContext()` and `require.context()` (`--bundler-contexts`)
 - 🗺️ Resolves `paths` aliases and `baseUrl` via `oxc_resolver`
 - 📄 Reads `tsconfig.json` including JSONC (comments + trailing commas)
 - 🔇 Respects `// ts-unused-exports:disable-next-line` suppression comments
@@ -45,6 +46,7 @@ Just run `rsprune` from your project root — it finds `tsconfig.json` automatic
 | `--ignore-files <regex>` | Skip files matching a regex (e.g. `--ignore-files '\.spec\.'`) |
 | `--exclude-paths-from-report <path>` | Omit paths from output (e.g. `--exclude-paths-from-report src/test`) |
 | `--timing` | Print per-phase timing breakdown to stderr |
+| `--bundler-contexts` | Treat files loaded by `import.meta.webpackContext()` or `require.context()` as fully used |
 
 ### Examples
 
@@ -57,6 +59,9 @@ rsprune path/to/tsconfig.json
 
 # Ignore test and spec files
 rsprune --ignore-files '\.spec\.' --ignore-files '\.test\.'
+
+# Count files loaded through webpack/rspack contexts as used
+rsprune --bundler-contexts
 
 # Use in CI — exits 1 if unused exports found
 rsprune && echo "✅ Clean!"

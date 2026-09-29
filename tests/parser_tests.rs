@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rsprune::parser::{analyze_file, is_suppressed, ExportInfo};
+use rsprune::parser::{analyze_file, is_suppressed, ContextInfo, ExportInfo};
 
 fn ts(src: &str) -> Vec<ExportInfo> {
     let path = Path::new("test.ts");
@@ -260,4 +260,57 @@ fn rsprune_disable_next_line_inline_suppresses() {
 fn rsprune_disable_on_wrong_line_does_not_match() {
     let src = "// rsprune:disable-next-line\nconst x = 1;\nexport const foo = 1;";
     assert!(!is_suppressed(src, 3));
+}
+
+// ─── BUNDLER CONTEXTS ─────────────────────────────────────────────────────────
+
+fn contexts(src: &str) -> Vec<ContextInfo> {
+    analyze_file(Path::new("test.ts"), src).contexts
+}
+
+#[test]
+fn detects_webpack_context_with_options() {
+    let found = contexts("import.meta.webpackContext('./features', { recursive: false, regExp: /\\.desktop\\.ts$/i });");
+    assert_eq!(
+        found,
+        vec![ContextInfo {
+            directory: "./features".to_string(),
+            recursive: false,
+            reg_exp: Some("\\.desktop\\.ts$".to_string()),
+            ignore_case: true,
+        }]
+    );
+}
+
+#[test]
+fn detects_require_context_with_arguments() {
+    let found = contexts("require.context('./features', false, /\\.ts$/);");
+    assert_eq!(
+        found,
+        vec![ContextInfo {
+            directory: "./features".to_string(),
+            recursive: false,
+            reg_exp: Some("\\.ts$".to_string()),
+            ignore_case: false,
+        }]
+    );
+}
+
+#[test]
+fn context_options_that_are_not_literals_keep_bundler_defaults() {
+    let found = contexts("const pattern = /x/; import.meta.webpackContext('.', { recursive: deep, regExp: pattern });");
+    assert_eq!(
+        found,
+        vec![ContextInfo { directory: ".".to_string(), recursive: true, reg_exp: None, ignore_case: false }]
+    );
+}
+
+#[test]
+fn ignores_context_calls_without_a_literal_directory() {
+    assert!(contexts("import.meta.webpackContext(dir); require.context(`./${dir}`);").is_empty());
+}
+
+#[test]
+fn ignores_other_context_calls() {
+    assert!(contexts("foo.context('./x'); import.meta.glob('./x'); webpackContext('./x');").is_empty());
 }
