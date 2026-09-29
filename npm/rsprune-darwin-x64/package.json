@@ -1,6 +1,6 @@
 {
   "name": "rsprune-darwin-x64",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "rsprune binary for macOS x64",
   "os": [
     "darwin"
