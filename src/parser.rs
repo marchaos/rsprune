@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use oxc_allocator::Allocator;
@@ -50,6 +51,23 @@ pub struct FileAnalysis {
     pub re_exports: Vec<ImportInfo>,
     /// Bundler context calls with a literal directory
     pub contexts: Vec<ContextInfo>,
+    /// Local binding behind an export when it differs from the exported name
+    /// (`export { a as b }` → `b: a`, `export default foo` → `default: foo`).
+    pub export_locals: HashMap<String, String>,
+    /// Names referenced in this file, not counting the export clauses themselves.
+    pub local_references: HashSet<String>,
+}
+
+impl FileAnalysis {
+    /// The name of the local binding behind an export, e.g. `foo` for `export { foo as bar }`.
+    pub fn local_name<'a>(&'a self, export: &'a ExportInfo) -> &'a str {
+        self.export_locals.get(&export.name).unwrap_or(&export.name)
+    }
+
+    /// True when the export's local binding is referenced elsewhere in its own file.
+    pub fn is_used_in_module(&self, export: &ExportInfo) -> bool {
+        self.local_references.contains(self.local_name(export))
+    }
 }
 
 pub fn analyze_file(path: &Path, source: &str) -> FileAnalysis {
@@ -157,6 +175,11 @@ impl<'a> Visit<'a> for AstCollector {
                     ModuleExportName::IdentifierName(id) => id.name.to_string(),
                     ModuleExportName::StringLiteral(s) => s.value.to_string(),
                 };
+                if let ModuleExportName::IdentifierReference(local) = &spec.local
+                    && local.name.as_str() != name
+                {
+                    self.analysis.export_locals.insert(name.clone(), local.name.to_string());
+                }
                 let (line, col) = line_col_from_starts(&self.line_starts,spec.span.start);
                 self.analysis.exports.push(ExportInfo { name, line, col });
             }
@@ -176,7 +199,29 @@ impl<'a> Visit<'a> for AstCollector {
             line,
             col,
         });
+        let local = match &decl.declaration {
+            // `export default foo` — the reference is the export itself, so don't count it
+            ExportDefaultDeclarationKind::Identifier(id) => {
+                self.analysis.export_locals.insert("default".to_string(), id.name.to_string());
+                return;
+            }
+            ExportDefaultDeclarationKind::FunctionDeclaration(func) => func.id.as_ref().map(|id| id.name.to_string()),
+            ExportDefaultDeclarationKind::ClassDeclaration(cls) => cls.id.as_ref().map(|id| id.name.to_string()),
+            _ => None,
+        };
+        if let Some(local) = local {
+            self.analysis.export_locals.insert("default".to_string(), local);
+        }
         walk::walk_export_default_declaration(self, decl);
+    }
+
+    // `export { foo }` names the binding without using it
+    fn visit_export_specifier(&mut self, _spec: &ExportSpecifier<'a>) {}
+
+    fn visit_identifier_reference(&mut self, id: &IdentifierReference<'a>) {
+        if !self.analysis.local_references.contains(id.name.as_str()) {
+            self.analysis.local_references.insert(id.name.to_string());
+        }
     }
 
     fn visit_export_all_declaration(&mut self, decl: &ExportAllDeclaration<'a>) {
