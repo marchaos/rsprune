@@ -1,3 +1,4 @@
+pub mod contexts;
 pub mod files;
 pub mod parser;
 pub mod resolver;

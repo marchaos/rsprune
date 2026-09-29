@@ -27,6 +27,20 @@ pub struct ImportInfo {
     pub is_namespace: bool,
 }
 
+/// A bundler context call such as `import.meta.webpackContext('./dir', { recursive, regExp })`
+/// or `require.context('./dir', recursive, regExp)`. Every file it matches is loaded by the bundler.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextInfo {
+    /// Directory passed to the call, relative to the calling file.
+    pub directory: String,
+    /// Whether subdirectories are searched. Defaults to true, as in webpack and rspack.
+    pub recursive: bool,
+    /// Source of the `regExp` filter, tested against `./`-prefixed paths. `None` matches every file.
+    pub reg_exp: Option<String>,
+    /// True when the `regExp` filter has the `i` flag.
+    pub ignore_case: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct FileAnalysis {
     pub exports: Vec<ExportInfo>,
@@ -34,6 +48,8 @@ pub struct FileAnalysis {
     pub imports: Vec<ImportInfo>,
     /// Re-exports (`export { X } from '...'`, `export * from '...'`)
     pub re_exports: Vec<ImportInfo>,
+    /// Bundler context calls with a literal directory
+    pub contexts: Vec<ContextInfo>,
 }
 
 pub fn analyze_file(path: &Path, source: &str) -> FileAnalysis {
@@ -238,6 +254,71 @@ impl<'a> Visit<'a> for AstCollector {
         // Continue walking into the expression (for chained .then etc.)
         oxc_ast_visit::walk::walk_import_expression(self, expr);
     }
+
+    // --- BUNDLER CONTEXTS ---
+
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        if let Some(context) = context_from_call(call) {
+            self.analysis.contexts.push(context);
+        }
+        walk::walk_call_expression(self, call);
+    }
+}
+
+/// Reads `import.meta.webpackContext(...)` or `require.context(...)`. Options that aren't literals keep
+/// the bundler defaults (recursive, match everything), so more files are treated as used rather than fewer.
+fn context_from_call(call: &CallExpression) -> Option<ContextInfo> {
+    let Expression::StaticMemberExpression(member) = &call.callee else {
+        return None;
+    };
+    let is_webpack_context = member.property.name == "webpackContext"
+        && matches!(&member.object, Expression::MetaProperty(meta) if meta.meta.name == "import" && meta.property.name == "meta");
+    let is_require_context = member.property.name == "context"
+        && matches!(&member.object, Expression::Identifier(id) if id.name == "require");
+    if !is_webpack_context && !is_require_context {
+        return None;
+    }
+
+    let argument = |index: usize| call.arguments.get(index).and_then(|arg| arg.as_expression());
+    let Some(Expression::StringLiteral(directory)) = argument(0) else {
+        return None;
+    };
+    let mut context = ContextInfo {
+        directory: directory.value.to_string(),
+        recursive: true,
+        reg_exp: None,
+        ignore_case: false,
+    };
+
+    let mut apply = |key: &str, value: &Expression| match (key, value) {
+        ("recursive", Expression::BooleanLiteral(recursive)) => context.recursive = recursive.value,
+        ("regExp", Expression::RegExpLiteral(reg_exp)) => {
+            context.reg_exp = Some(reg_exp.regex.pattern.text.to_string());
+            context.ignore_case = reg_exp.regex.flags.contains(RegExpFlags::I);
+        }
+        _ => {}
+    };
+
+    if is_webpack_context {
+        if let Some(Expression::ObjectExpression(options)) = argument(1) {
+            for property in &options.properties {
+                if let ObjectPropertyKind::ObjectProperty(property) = property
+                    && let Some(key) = property.key.static_name()
+                {
+                    apply(&key, &property.value);
+                }
+            }
+        }
+    } else {
+        if let Some(recursive) = argument(1) {
+            apply("recursive", recursive);
+        }
+        if let Some(reg_exp) = argument(2) {
+            apply("regExp", reg_exp);
+        }
+    }
+
+    Some(context)
 }
 
 impl AstCollector {

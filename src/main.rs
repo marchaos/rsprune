@@ -1,4 +1,4 @@
-use rsprune::{files, parser, resolver, tsconfig};
+use rsprune::{contexts, files, parser, resolver, tsconfig};
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -32,6 +32,10 @@ struct Args {
     /// Print per-phase timing breakdown to stderr
     #[arg(long)]
     timing: bool,
+
+    /// Treat files loaded by `import.meta.webpackContext(...)` or `require.context(...)` as fully used
+    #[arg(long)]
+    bundler_contexts: bool,
 }
 
 macro_rules! phase {
@@ -149,6 +153,24 @@ fn main() -> Result<()> {
             }
         });
     });
+
+    if args.bundler_contexts {
+        phase!(args.timing, "resolve bundler contexts", {
+            let all_names = ["*".to_string()];
+            for (from_path, analysis, _source) in &analyses {
+                for context in &analysis.contexts {
+                    let candidates = analyses.iter().map(|(path, _, _)| path.as_path());
+                    match contexts::matching_files(context, from_path, candidates) {
+                        Ok(matched) => matched.into_iter().for_each(|path| record(path, &all_names)),
+                        Err(error) => eprintln!(
+                            "rsprune: skipping bundler context in {}: {error}",
+                            from_path.display()
+                        ),
+                    }
+                }
+            }
+        });
+    }
 
     // Find unused exports
     let mut unused: Vec<(PathBuf, Vec<parser::ExportInfo>)> = phase!(args.timing, "find unused", {

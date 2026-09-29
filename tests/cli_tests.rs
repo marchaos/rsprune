@@ -341,3 +341,66 @@ fn no_include_walks_from_root() {
     // lib/b.ts imports foo, so foo should be considered used → clean run
     assert!(out.status.success(), "expected exit 0, got: {stdout}");
 }
+
+// ─── BUNDLER CONTEXTS ─────────────────────────────────────────────────────────
+
+/// Writes a project whose loader pulls in `features/*/config.ts` through a bundler context,
+/// and returns rsprune's stdout.
+fn run_with_context(loader: &str, extra_args: &[&str]) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(src.join("features/a/nested")).unwrap();
+    fs::create_dir_all(src.join("features/b")).unwrap();
+
+    fs::write(src.join("features/loader.ts"), loader).unwrap();
+    fs::write(src.join("features/a/config.ts"), "export default { a: 1 };").unwrap();
+    fs::write(src.join("features/b/config.ts"), "export default { b: 1 };").unwrap();
+    fs::write(src.join("features/a/nested/config.ts"), "export default { nested: 1 };").unwrap();
+    fs::write(src.join("features/b/helper.ts"), "export const helper = 1;").unwrap();
+    write_tsconfig(dir.path(), "src");
+
+    let out = Command::new(bin())
+        .arg("tsconfig.json")
+        .args(extra_args)
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+#[test]
+fn context_matches_are_reported_without_the_flag() {
+    let stdout = run_with_context(
+        "import.meta.webpackContext('.', { recursive: true, regExp: /^\\.\\/[^/]+\\/config\\.ts$/ });",
+        &[],
+    );
+    assert!(stdout.contains("a/config.ts"), "got: {stdout}");
+    assert!(stdout.contains("b/config.ts"), "got: {stdout}");
+}
+
+#[test]
+fn webpack_context_matches_count_as_used() {
+    let stdout = run_with_context(
+        "import.meta.webpackContext('.', { recursive: true, regExp: /^\\.\\/[^/]+\\/config\\.ts$/ });",
+        &["--bundler-contexts"],
+    );
+    assert!(!stdout.contains("a/config.ts"), "got: {stdout}");
+    assert!(!stdout.contains("b/config.ts"), "got: {stdout}");
+    assert!(stdout.contains("nested/config.ts"), "regExp should exclude nested files, got: {stdout}");
+    assert!(stdout.contains("helper.ts"), "regExp should exclude other files, got: {stdout}");
+}
+
+#[test]
+fn require_context_without_filter_matches_every_file() {
+    let stdout = run_with_context("require.context('./a');", &["--bundler-contexts"]);
+    assert!(!stdout.contains("a/config.ts"), "got: {stdout}");
+    assert!(!stdout.contains("nested/config.ts"), "got: {stdout}");
+    assert!(stdout.contains("b/config.ts"), "context should only cover its directory, got: {stdout}");
+}
+
+#[test]
+fn non_recursive_context_skips_subdirectories() {
+    let stdout = run_with_context("require.context('./a', false);", &["--bundler-contexts"]);
+    assert!(!stdout.contains("/a/config.ts["), "got: {stdout}");
+    assert!(stdout.contains("nested/config.ts"), "got: {stdout}");
+}
